@@ -1,0 +1,189 @@
+HCI PROJECT: HAND GESTURE SCROLL CONTROL
+========================================
+
+1. PROJECT DESCRIPTION
+
+This project is a Python desktop application that lets a user scroll using
+hand gestures captured by a webcam. It demonstrates Human-Computer Interaction
+(HCI) by translating visible hand poses and index-finger movement into mouse
+wheel commands. A live camera window shows the detected hand, recognized
+gesture, scrolling status, and instructions.
+
+The main purpose is to explore touch-free scrolling for activities such as
+reading webpages or documents. The application sends operating-system mouse
+wheel events, so the target application and pointer position determine where
+scrolling happens. It does not directly automate or connect to a browser.
+
+2. MAIN FEATURES AND CONTROLS
+
+- Activate scrolling: Show one open hand with all five fingers extended for
+  two continuous seconds. Changing the pose or losing tracking restarts this
+  activation timer.
+- Start scrolling: Once activated, move the index fingertip upward to scroll
+  up or downward to scroll down.
+- Continue scrolling: After a direction is selected, scrolling continues even
+  when the finger stays still, as long as a valid, non-fist hand remains visible.
+- Reverse scrolling: Move the index fingertip in the opposite direction.
+  The program requires sufficient reverse movement and several confirming
+  frames before changing direction, reducing accidental reversals.
+- Stop scrolling: Make a fist. Wheel output pauses immediately, and three
+  consecutive fist frames turn scrolling mode off.
+- Pause tracking: Showing no hand or more than one hand pauses wheel output.
+  Scrolling mode remains enabled. A direction can survive a brief interruption,
+  but five consecutive ambiguous or missing-hand frames clear it.
+- Exit: Hold a fist continuously for three seconds, press the lowercase q key
+  while the camera window has focus, or close the camera window.
+- Emergency exit: PyAutoGUI's mouse-corner fail-safe is enabled. If triggered
+  when a scroll command is attempted, the application exits its processing loop.
+
+After activation, the user does not need to keep all five fingers extended.
+Other non-fist poses keep scrolling mode active; index fingertip position is
+the movement input.
+
+3. HOW THE APPLICATION WORKS
+
+The processing flow is:
+
+Webcam -> Image preparation -> Hand landmark detection -> Gesture and state
+updates -> Scroll commands -> Live visual feedback -> Repeat
+
+Step 1: Initialize the detector and camera.
+The program loads hand_landmarker.task through MediaPipe's Hand Landmarker
+Tasks API in VIDEO mode. It opens webcam index 0 and requests a 640 x 480 image.
+The camera may supply a different resolution.
+
+Step 2: Prepare each frame.
+OpenCV mirrors the camera image horizontally so the preview behaves like a
+mirror. The frame is converted from OpenCV's BGR color order into RGB and
+wrapped as a MediaPipe image.
+
+Step 3: Detect hands.
+MediaPipe processes each frame with a strictly increasing timestamp and
+returns hand landmarks. The detector is configured to detect up to two hands,
+but control is allowed only when exactly one hand is detected.
+
+Step 4: Recognize the pose.
+The code estimates how many fingers are extended using joint angles and
+distances between landmarks. Five extended fingers represent an open hand;
+zero represent a fist. These geometric rules interpret MediaPipe's landmark
+positions rather than using a separately trained gesture classifier.
+
+Step 5: Update the application state.
+A ScrollState object preserves information between frames, including whether
+scrolling is enabled, the previous fingertip position, the selected direction,
+gesture confirmation counters, and activation and exit timers. The timers use
+a monotonic clock so system clock changes do not affect gesture hold durations.
+
+Step 6: Interpret vertical movement.
+Only the index fingertip, landmark 8, supplies scrolling movement. Its vertical
+coordinate is normalized relative to the camera image. Smaller Y values mean
+the fingertip moved upward; larger values mean it moved downward.
+
+An initial movement must exceed 0.02 of the image height to select a direction.
+Reversing direction requires movement exceeding 0.06 of the image height and
+four qualifying consecutive opposite-motion frames. Gradual reverse movement
+can accumulate before confirmation begins. A stationary frame interrupts
+reversal confirmation but does not stop ongoing scrolling.
+
+Step 7: Send mouse wheel commands.
+A separate timer schedules continuous scrolling in the selected direction.
+The default amount is 10 wheel clicks per command, with at least 0.06 seconds
+between ordinary commands. A confirmed reversal can take effect immediately.
+The actual rate also depends on processing speed. Finger movement selects the
+direction; it does not dynamically set scrolling speed.
+
+Step 8: Display feedback and clean up.
+The camera preview shows the hand skeleton, mode status, gesture, direction,
+current action, and relevant countdowns. When the main loop ends, its cleanup
+block releases the camera, closes the display windows, and closes the detector.
+Temporary frame-capture failures are retried before the program gives up.
+
+4. PROJECT FILES AND IMPORTANT FUNCTIONS
+
+main.py
+  Coordinates the entire application.
+  - main(): Runs the capture, detection, state update, scrolling, and display
+    loop, then performs cleanup.
+
+camera.py
+  Handles webcam input and conversion for MediaPipe.
+  - setup_camera(): Opens the default webcam and requests the frame size.
+  - prepare_frame(): Mirrors the frame and creates the RGB MediaPipe image.
+  - track_hands(): Runs hand landmark detection on a video frame.
+
+gesture_control.py
+  Contains gesture recognition, scrolling logic, and persistent state.
+  - count_fingers(): Estimates the number of extended fingers.
+  - is_fist(): Checks whether no fingers are extended.
+  - ScrollState: Stores mode, motion, direction, counters, and timer values.
+  - update_scroll_mode(): Handles activation, deactivation, and tracking loss.
+  - update_exit_hold(): Checks whether a fist has been held long enough to quit.
+  - reset_tracking(): Clears motion tracking and transient feedback.
+  - detect_vertical_movement(): Selects or reverses the scrolling direction.
+  - continuous_scroll_direction(): Determines when a wheel command is due.
+  - scroll(): Sends a positive or negative mouse wheel command using PyAutoGUI.
+  - debug_scroll_state(): Prints diagnostic information when debugging is on.
+  - _distance() and _angle(): Provide geometry calculations for pose recognition.
+
+gui.py
+  Draws the live interface and manages its window.
+  - draw_status_panel(): Displays mode, gesture, direction, and action labels.
+  - draw_instructions(): Displays the gesture controls.
+  - draw_hand_status(): Draws landmark points and hand connections.
+  - draw_scroll_direction(): Draws an up or down arrow.
+  - draw_welcome(): Adds the welcome label.
+  - show_frame(): Displays a frame and checks the q key and exit state.
+  - exit_requested(): Detects and remembers window closure.
+  - close(): Closes OpenCV windows.
+
+hand_landmarker.task
+  The local model asset loaded by MediaPipe for hand landmark detection.
+
+test_gestures.py
+  Automated regression tests for activation, stopping, exit timing, direction
+  changes, tracking loss, and continuous scrolling. These tests simulate poses
+  and times and mock wheel output rather than controlling the desktop.
+
+test_gui.py
+  Automated tests for window closure and keyboard exit behavior. Display calls
+  are mocked so these tests do not need a real camera preview window.
+
+5. TECHNOLOGIES AND SETUP
+
+The source uses Python, OpenCV (cv2), MediaPipe, and PyAutoGUI. Python's standard
+library supplies timing, mathematics, dataclasses, and unittest. Use Python
+3.10 or newer for the type annotation syntax in this code, with dependency
+versions compatible with the chosen Python version and operating system.
+
+Install the required packages in your selected Python environment:
+
+  python -m pip install opencv-python mediapipe pyautogui
+
+Run from the project folder, which must contain hand_landmarker.task:
+
+  python main.py
+
+Keep the target browser or document application focused and place the mouse
+pointer over the content you want to scroll. Keep one hand clearly visible to
+the webcam, hold an open hand for two seconds, then move the index finger to
+choose a scrolling direction.
+
+Run the included automated tests with:
+
+  python -m unittest test_gestures.py test_gui.py
+
+6. CURRENT SCOPE AND LIMITATIONS
+
+This implementation supports vertical scrolling. It does not implement mouse
+pointer movement, clicking, horizontal scrolling, or general sign-language
+recognition. Recognition depends on the camera image and the reliability of
+the landmark and finger-count estimates. Lighting, occlusion, and hand pose
+can affect results.
+
+The supplied tests check program logic and window behavior; they do not measure
+live webcam recognition accuracy 100%. 
+
+The application processes frames locally using the included model. The reviewed
+code does not save video recordings or upload camera frames. Debug output is
+currently enabled in gesture_control.py and can print tracking details, the
+active window title, and pointer position to the console.
